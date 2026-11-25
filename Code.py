@@ -5,11 +5,17 @@ import py5
 
 DATEI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lauf_daten.txt")
 FRAGEN = ["Aktuelle 2km-Zeit (mm:ss):", "Zielzeit (mm:ss):", "Neuer Lauf (mm:ss):"]
+# Buttons und Dialog: (x, y, Breite, Höhe)
+BTN_HISTORIE = (250, 10, 130, 28)
+BTN_NEUSTART = (395, 10, 95, 28)
+DLG_JA = (120, 170, 100, 35)
+DLG_NEIN = (280, 170, 100, 35)
 
 zeiten = []    # [Start, Ziel, Lauf 1, Lauf 2, ...] in Sekunden
 eingabe = ""
 meldung = ""
-
+ansicht = "eingabe"      # "eingabe" oder "historie"
+bestaetigung = False     # True = Dialog ist offen
 
 def sek(text):
     """'10:30' -> 630 (None bei falschem Format)."""
@@ -44,9 +50,9 @@ def laden():
 
 
 def neustart():
-    global eingabe, meldung
+    global eingabe, meldung, ansicht, bestaetigung
     zeiten.clear()
-    eingabe, meldung = "", ""
+    eingabe, meldung, ansicht, bestaetigung = "", "", "eingabe", False
     if os.path.exists(DATEI):
         os.remove(DATEI)
 
@@ -77,14 +83,21 @@ def bestaetigen():
     speichern()
 
 
-def setup():
-    py5.size(500, 320)
+def im_feld(feld):
+    x, y, w, h = feld
+    return x <= py5.mouse_x <= x + w and y <= py5.mouse_y <= y + h
+
+
+def button(feld, beschriftung, farbe):
+    py5.fill(*farbe)
+    py5.rect(*feld)
+    py5.fill(255)
+    py5.text_size(14)
+    py5.text(beschriftung, feld[0] + 12, feld[1] + feld[3] - 9)
     py5.text_size(18)
-    laden()
 
 
-def draw():
-    py5.background(245)
+def zeichne_eingabe():
     py5.fill(0)
     py5.text("2km Lauf-Tracker", 20, 35)
     py5.text(FRAGEN[min(len(zeiten), 2)], 20, 80)
@@ -98,54 +111,38 @@ def draw():
         py5.rect(20, 185, 460 * fortschritt(), 25)
         py5.fill(0)
         py5.text(f"{txt(zeiten[0])} -> {txt(zeiten[1])}   Läufe: {len(zeiten) - 2}", 20, 240)
-    py5.text_size(12)
-    py5.text("Taste N = Neustart", 20, 305)
-    py5.text_size(18)
 
 
-def key_pressed():
-    global eingabe
-    k = py5.key
-    if k in ("\n", "\r"):
-        bestaetigen()
-    elif k in ("\b", chr(127)):
-        eingabe = eingabe[:-1]
-    elif len(k) == 1 and k in "0123456789:" and len(eingabe) < 5:
-        eingabe += k
-    elif k in ("n", "N"):
-        neustart()
-
-#Running-History Start
-historie = False
-_draw, _key_pressed = draw, key_pressed
-BTN = (340, 10, 150, 28)  # x, y, Breite, Höhe
-
-
-def historie_zeichnen():
+def zeichne_historie():
     py5.fill(0)
     py5.text("Running-History", 20, 35)
-    werte = zeiten[:1] + zeiten[2:]  # Start + alle Läufe
     if len(zeiten) < 2:
         py5.text("Noch keine Daten.", 20, 80)
         return
+
+    werte = zeiten[:1] + zeiten[2:]  # Start + alle Läufe
     ziel = zeiten[1]
-    lo, hi = min(werte + [ziel]) - 10, max(werte) + 10
+    tief, hoch = min(werte + [ziel]) - 10, max(werte) + 10
     x0, x1, y0, y1 = 60, 470, 70, 250
-    px = lambda i: x0 + (x1 - x0) * i / max(1, len(werte) - 1)
-    pyy = lambda t: py5.remap(t, lo, hi, y0, y1)
+
+    def x_pos(i):
+        return x0 + (x1 - x0) * i / max(1, len(werte) - 1)
+
+    def y_pos(t):  # schnellere Zeit = weiter oben
+        return py5.remap(t, tief, hoch, y0, y1)
 
     py5.stroke(0)
     py5.line(x0, y0, x0, y1)
     py5.line(x0, y1, x1, y1)
     py5.stroke(80, 180, 60)  # Ziellinie
-    py5.line(x0, pyy(ziel), x1, pyy(ziel))
+    py5.line(x0, y_pos(ziel), x1, y_pos(ziel))
 
-    py5.stroke(30, 90, 160)
+    py5.stroke(30, 90, 160)  # Verlauf
     py5.stroke_weight(2)
     py5.no_fill()
     py5.begin_shape()
     for i, t in enumerate(werte):
-        py5.vertex(px(i), pyy(t))
+        py5.vertex(x_pos(i), y_pos(t))
     py5.end_shape()
 
     py5.stroke_weight(1)
@@ -153,99 +150,75 @@ def historie_zeichnen():
     py5.text_size(12)
     for i, t in enumerate(werte):
         py5.fill(30, 90, 160)
-        py5.circle(px(i), pyy(t), 8)
+        py5.circle(x_pos(i), y_pos(t), 8)
         py5.fill(0)
-        py5.text(txt(t), px(i) - 12, pyy(t) - 10)
-        py5.text("S" if i == 0 else str(i), px(i) - 3, y1 + 16)
+        py5.text(txt(t), x_pos(i) - 12, y_pos(t) - 10)
+        py5.text("S" if i == 0 else str(i), x_pos(i) - 3, y1 + 16)
     py5.fill(80, 180, 60)
-    py5.text(f"Ziel {txt(ziel)}", x0 + 5, pyy(ziel) - 5)
+    py5.text(f"Ziel {txt(ziel)}", x0 + 5, y_pos(ziel) - 5)
     py5.text_size(18)
 
 
-def draw():
-    if historie:
-        py5.background(245)
-        historie_zeichnen()
-    else:
-        _draw()
-    py5.fill(30, 90, 160)
-    py5.rect(*BTN)
+def zeichne_dialog():
+    py5.fill(0, 150)
+    py5.rect(0, 0, 500, 320)  # Hintergrund abdunkeln
     py5.fill(255)
-    py5.text_size(14)
-    py5.text("Zurück" if historie else "Running-History", BTN[0] + 12, BTN[1] + 20)
+    py5.rect(100, 100, 300, 130)
+    py5.fill(0)
+    py5.text("Wirklich alles löschen?", 130, 140)
+    button(DLG_JA, "Ja", (200, 60, 60))
+    button(DLG_NEIN, "Nein", (80, 180, 60))
+
+
+# ---------- Hauptfunktionen von py5 ----------
+def setup():
+    py5.size(500, 320)
     py5.text_size(18)
-
-
-def mouse_pressed():
-    global historie
-    x, y, w, h = BTN
-    if x <= py5.mouse_x <= x + w and y <= py5.mouse_y <= y + h:
-        historie = not historie
-
-
-def key_pressed():
-    if not historie:  # in der Historie keine Eingabe
-        _key_pressed()
-#Ende Running-History
-
-
-#Neustart-Bestätigung
-bestaetigung = False
-_draw2, _key2, _mouse2 = draw, key_pressed, mouse_pressed
-JA, NEIN = (120, 170, 100, 35), (280, 170, 100, 35)
-
-
-def im_feld(r):
-    x, y, w, h = r
-    return x <= py5.mouse_x <= x + w and y <= py5.mouse_y <= y + h
+    laden()
 
 
 def draw():
-    _draw2()
+    py5.background(245)
+    if ansicht == "eingabe":
+        zeichne_eingabe()
+    else:
+        zeichne_historie()
+    button(BTN_HISTORIE, "Zurück" if ansicht == "historie" else "Running-History", (30, 90, 160))
+    button(BTN_NEUSTART, "Neustart", (200, 60, 60))
     if bestaetigung:
-        py5.fill(0, 150)
-        py5.rect(0, 0, 500, 320)  # Hintergrund abdunkeln
-        py5.fill(255)
-        py5.rect(100, 100, 300, 130)
-        py5.fill(0)
-        py5.text("Bist du dir sicher?", 150, 140)
-        py5.fill(80, 180, 60)
-        py5.rect(*JA)
-        py5.fill(200, 60, 60)
-        py5.rect(*NEIN)
-        py5.fill(255)
-        py5.text_size(14)
-        py5.text("Ja", JA[0] + 38, JA[1] + 23)
-        py5.text("Nein", NEIN[0] + 32, NEIN[1] + 23)
-        py5.text_size(18)
+        zeichne_dialog()
 
 
 def key_pressed():
-    global bestaetigung
+    global eingabe, bestaetigung
     k = py5.key
-    if bestaetigung:
-        if k in ("j", "J", "\n", "\r"):
+    if bestaetigung:  # Dialog offen: nur J / N
+        if k in ("j", "J"):
             neustart()
-            bestaetigung = False
         elif k in ("n", "N"):
             bestaetigung = False
-    elif k in ("n", "N") and not historie:
-        bestaetigung = True  # statt direktem Neustart erst fragen
-    else:
-        _key2()
+    elif k in ("n", "N"):
+        bestaetigung = True
+    elif ansicht == "eingabe":
+        if k in ("\n", "\r"):
+            bestaetigen()
+        elif k in ("\b", chr(127)):
+            eingabe = eingabe[:-1]
+        elif len(k) == 1 and k in "0123456789:" and len(eingabe) < 5:
+            eingabe += k
 
 
 def mouse_pressed():
-    global bestaetigung
-    if bestaetigung:
-        if im_feld(JA):
+    global ansicht, bestaetigung
+    if bestaetigung:  # Dialog offen: nur Ja / Nein
+        if im_feld(DLG_JA):
             neustart()
+        elif im_feld(DLG_NEIN):
             bestaetigung = False
-        elif im_feld(NEIN):
-            bestaetigung = False
-    else:
-        _mouse2()
-#Ende Neustart-Bestätigung
+    elif im_feld(BTN_NEUSTART):
+        bestaetigung = True
+    elif im_feld(BTN_HISTORIE):
+        ansicht = "historie" if ansicht == "eingabe" else "eingabe"
 
 
 py5.run_sketch()
